@@ -106,6 +106,11 @@ activitiesRouter.post('/', upload.single('gpx'), async (req, res) => {
   const routeId = req.body.routeId ? String(req.body.routeId) : null;
   const requestedParticipants = parseParticipantUserIds(req.body.participantUserIds);
 
+  if (!routeId) {
+    res.status(400).json({ message: 'routeId is required. Create a route first and then upload completion.' });
+    return;
+  }
+
   const parsed = await parseGpx(req.file.buffer);
   let coords = parsed.points;
 
