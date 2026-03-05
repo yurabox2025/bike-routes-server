@@ -88,6 +88,25 @@ routesRouter.get('/:id', async (req, res) => {
   res.json({ route, completions });
 });
 
+routesRouter.delete('/:id', async (req, res) => {
+  await updateData((data) => {
+    const routeIndex = data.routes.findIndex((candidate) => candidate.id === req.params.id);
+    if (routeIndex === -1) {
+      throw new Error('Route not found');
+    }
+
+    data.routes.splice(routeIndex, 1);
+
+    for (const activity of data.activities) {
+      if (activity.routeId === req.params.id) {
+        activity.routeId = null;
+      }
+    }
+  });
+
+  res.json({ ok: true });
+});
+
 routesRouter.post('/from-activity/:activityId', async (req, res) => {
   const parsed = routeFromActivitySchema.safeParse(req.body);
   if (!parsed.success) {

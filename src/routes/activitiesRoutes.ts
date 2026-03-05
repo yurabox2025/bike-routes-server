@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import fs from 'node:fs/promises';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
@@ -181,6 +182,22 @@ activitiesRouter.post('/:id/assign-route', async (req, res) => {
   res.json({ activity: updatedActivity });
 });
 
+activitiesRouter.post('/:id/unassign-route', async (req, res) => {
+  let updatedActivity: Activity | undefined;
+
+  await updateData((data) => {
+    const activity = data.activities.find((candidate) => candidate.id === req.params.id);
+    if (!activity) {
+      throw new Error('Activity not found');
+    }
+
+    activity.routeId = null;
+    updatedActivity = activity;
+  });
+
+  res.json({ activity: updatedActivity });
+});
+
 activitiesRouter.post('/:id/participants', async (req, res) => {
   const parsed = updateParticipantsSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -207,4 +224,52 @@ activitiesRouter.post('/:id/participants', async (req, res) => {
   });
 
   res.json({ activity: updatedActivity });
+});
+
+activitiesRouter.delete('/:id/participants/:userId', async (req, res) => {
+  let updatedActivity: Activity | undefined;
+
+  await updateData((data) => {
+    const activity = data.activities.find((candidate) => candidate.id === req.params.id);
+    if (!activity) {
+      throw new Error('Activity not found');
+    }
+
+    if (req.params.userId === activity.userId) {
+      throw new Error('Activity owner cannot be removed from participants');
+    }
+
+    const existingParticipantIds = normalizeParticipants(activity);
+    activity.participantUserIds = existingParticipantIds.filter((userId) => userId !== req.params.userId);
+    updatedActivity = activity;
+  });
+
+  res.json({ activity: updatedActivity });
+});
+
+activitiesRouter.delete('/:id', async (req, res) => {
+  let deletedActivity: Activity | undefined;
+
+  await updateData((data) => {
+    const index = data.activities.findIndex((candidate) => candidate.id === req.params.id);
+    if (index === -1) {
+      throw new Error('Activity not found');
+    }
+
+    deletedActivity = data.activities[index];
+    data.activities.splice(index, 1);
+  });
+
+  if (deletedActivity?.gpxStorage.provider === 'local') {
+    try {
+      await fs.unlink(deletedActivity.gpxStorage.pathOrUrl);
+    } catch (error) {
+      const fsError = error as NodeJS.ErrnoException;
+      if (fsError.code !== 'ENOENT') {
+        console.error('Failed to delete local GPX file:', error);
+      }
+    }
+  }
+
+  res.json({ ok: true });
 });
