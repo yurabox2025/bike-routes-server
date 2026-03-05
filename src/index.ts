@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import { config } from './config.js';
+import { config, validateConfig } from './config.js';
 import { initDataStore } from './services/dataStore.js';
 import { authRouter } from './routes/authRoutes.js';
 import { routesRouter } from './routes/routesRoutes.js';
@@ -10,6 +10,7 @@ import { usersRouter } from './routes/usersRoutes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 async function bootstrap(): Promise<void> {
+  validateConfig();
   await initDataStore();
 
   const app = express();
