@@ -8,10 +8,63 @@ function authHeaders(): Record<string, string> {
   };
 }
 
+function buildDirectoryChain(filePath: string): string[] {
+  if (filePath.startsWith('app:/')) {
+    const segments = filePath
+      .slice('app:/'.length)
+      .split('/')
+      .filter(Boolean);
+    const dirSegments = segments.slice(0, -1);
+    const chain: string[] = [];
+    let current = 'app:';
+    for (const segment of dirSegments) {
+      current = `${current}/${segment}`;
+      chain.push(current);
+    }
+    return chain;
+  }
+
+  const segments = filePath.split('/').filter(Boolean);
+  const dirSegments = segments.slice(0, -1);
+  const chain: string[] = [];
+  let current = '';
+  for (const segment of dirSegments) {
+    current = `${current}/${segment}`;
+    chain.push(current);
+  }
+  return chain;
+}
+
+async function ensureDirectory(path: string): Promise<void> {
+  const mkdirUrl = new URL('https://cloud-api.yandex.net/v1/disk/resources');
+  mkdirUrl.searchParams.set('path', path);
+
+  const mkdirResp = await fetch(mkdirUrl, {
+    method: 'PUT',
+    headers: authHeaders()
+  });
+
+  if (mkdirResp.status === 201 || mkdirResp.status === 202 || mkdirResp.status === 409) {
+    return;
+  }
+
+  const body = await mkdirResp.text();
+  throw new Error(`Yandex Disk mkdir error for "${path}": ${mkdirResp.status} ${body}`);
+}
+
+async function ensureDirectoriesForFile(filePath: string): Promise<void> {
+  const chain = buildDirectoryChain(filePath);
+  for (const dir of chain) {
+    await ensureDirectory(dir);
+  }
+}
+
 export async function uploadDataToYandexDisk(data: DataFile): Promise<void> {
   if (!config.yadiskToken) {
     throw new Error('YADISK_TOKEN is not configured');
   }
+
+  await ensureDirectoriesForFile(config.yadiskDataPath);
 
   const metaUrl = new URL('https://cloud-api.yandex.net/v1/disk/resources/upload');
   metaUrl.searchParams.set('path', config.yadiskDataPath);
