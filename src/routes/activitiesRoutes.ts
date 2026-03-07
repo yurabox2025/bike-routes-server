@@ -8,7 +8,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { parseGpx } from '../services/gpxParser.js';
 import { storeGpx } from '../services/gpxStorage.js';
 import { readData, updateData } from '../services/dataStore.js';
-import type { Activity } from '../types/models.js';
+import type { Activity, Route } from '../types/models.js';
 import { limitPoints, lineDistanceMeters, privacyCut, simplifyCoords, toLineString } from '../utils/geo.js';
 
 const upload = multer({
@@ -57,15 +57,38 @@ function normalizeParticipants(activity: Activity): string[] {
   return [activity.userId];
 }
 
+function normalizeRouteVisibility(route: Route): 'public' | 'private' {
+  return route.visibility === 'private' ? 'private' : 'public';
+}
+
+function canViewRoute(route: Route, userId: string): boolean {
+  return normalizeRouteVisibility(route) === 'public' || route.createdBy === userId;
+}
+
+function canUseRoute(route: Route, userId: string): boolean {
+  return normalizeRouteVisibility(route) === 'public' || route.createdBy === userId;
+}
+
 export const activitiesRouter = Router();
 activitiesRouter.use(requireAuth);
 
 activitiesRouter.get('/', async (req, res) => {
   const routeId = req.query.routeId ? String(req.query.routeId) : undefined;
   const userId = req.query.userId ? String(req.query.userId) : undefined;
+  const currentUserId = req.currentUser!.id;
 
   const data = await readData();
+  const routeMap = new Map(data.routes.map((route) => [route.id, route]));
   const activities = data.activities.filter((activity) => {
+    if (activity.routeId) {
+      const route = routeMap.get(activity.routeId);
+      if (!route || !canViewRoute(route, currentUserId)) {
+        return false;
+      }
+    } else if (activity.userId !== currentUserId && req.currentUser!.role !== 'admin') {
+      return false;
+    }
+
     if (routeId && activity.routeId !== routeId) {
       return false;
     }
@@ -88,6 +111,17 @@ activitiesRouter.get('/:id', async (req, res) => {
   const activity = data.activities.find((candidate) => candidate.id === req.params.id);
   if (!activity) {
     res.status(404).json({ message: 'Activity not found' });
+    return;
+  }
+
+  if (activity.routeId) {
+    const route = data.routes.find((candidate) => candidate.id === activity.routeId);
+    if (!route || !canViewRoute(route, req.currentUser!.id)) {
+      res.status(403).json({ message: 'Запрещено' });
+      return;
+    }
+  } else if (activity.userId !== req.currentUser!.id && req.currentUser!.role !== 'admin') {
+    res.status(403).json({ message: 'Запрещено' });
     return;
   }
 
@@ -131,8 +165,12 @@ activitiesRouter.post('/', upload.single('gpx'), async (req, res) => {
   let createdActivity: Activity | undefined;
 
   await updateData((data) => {
-    if (routeId && !data.routes.some((route) => route.id === routeId)) {
+    const route = data.routes.find((candidate) => candidate.id === routeId);
+    if (!route) {
       throw new Error('Route not found');
+    }
+    if (!canUseRoute(route, req.currentUser!.id)) {
+      throw new Error('Запрещено');
     }
 
     const uniqueParticipantIds = Array.from(new Set([req.currentUser!.id, ...requestedParticipants]));
@@ -170,9 +208,12 @@ activitiesRouter.post('/:id/assign-route', async (req, res) => {
   let updatedActivity: Activity | undefined;
 
   await updateData((data) => {
-    const routeExists = data.routes.some((route) => route.id === parsed.data.routeId);
-    if (!routeExists) {
+    const route = data.routes.find((candidate) => candidate.id === parsed.data.routeId);
+    if (!route) {
       throw new Error('Route not found');
+    }
+    if (!canUseRoute(route, req.currentUser!.id)) {
+      throw new Error('Запрещено');
     }
 
     const activity = data.activities.find((candidate) => candidate.id === req.params.id);
@@ -256,10 +297,15 @@ activitiesRouter.delete('/:id', async (req, res) => {
   let deletedActivity: Activity | undefined;
 
   await updateData((data) => {
-    const index = data.activities.findIndex((candidate) => candidate.id === req.params.id);
-    if (index === -1) {
+    const activity = data.activities.find((candidate) => candidate.id === req.params.id);
+    if (!activity) {
       throw new Error('Activity not found');
     }
+    if (activity.userId !== req.currentUser!.id && req.currentUser!.role !== 'admin') {
+      throw new Error('Запрещено');
+    }
+
+    const index = data.activities.findIndex((candidate) => candidate.id === req.params.id);
 
     deletedActivity = data.activities[index];
     data.activities.splice(index, 1);

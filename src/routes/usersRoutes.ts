@@ -24,7 +24,7 @@ usersRouter.get('/', async (_req, res) => {
 
 usersRouter.post('/', async (req, res) => {
   if (req.currentUser?.role !== 'admin') {
-    res.status(403).json({ message: 'Forbidden' });
+    res.status(403).json({ message: 'Запрещено' });
     return;
   }
 

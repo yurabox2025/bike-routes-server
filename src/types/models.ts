@@ -18,6 +18,7 @@ export interface Route {
   id: string;
   name: string;
   createdBy: string;
+  visibility: 'public' | 'private';
   routeLineGeoJson: LineStringGeoJson;
   createdAt: string;
 }
