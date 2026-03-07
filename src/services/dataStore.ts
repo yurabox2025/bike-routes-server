@@ -47,6 +47,18 @@ async function writeLocalData(data: DataFile): Promise<void> {
   await writeJsonAtomic(config.dataFilePath, data);
 }
 
+async function writeLocalMirrorIfNeeded(data: DataFile): Promise<void> {
+  if (isRender) {
+    return;
+  }
+
+  try {
+    await writeLocalData(data);
+  } catch (error) {
+    console.warn('Local data mirror write skipped:', error);
+  }
+}
+
 async function readDataUnsafe(): Promise<DataFile> {
   if (!shouldUseYadiskForData()) {
     return readLocalData();
@@ -54,7 +66,7 @@ async function readDataUnsafe(): Promise<DataFile> {
 
   try {
     const data = await downloadDataFromYandexDisk();
-    await writeLocalData(data);
+    await writeLocalMirrorIfNeeded(data);
     return data;
   } catch (error) {
     console.error('Failed to read data.json from Yandex Disk:', error);
@@ -73,7 +85,7 @@ async function persistData(data: DataFile): Promise<void> {
 
   try {
     await uploadDataToYandexDisk(data);
-    await writeLocalData(data);
+    await writeLocalMirrorIfNeeded(data);
   } catch (error) {
     console.error('Failed to write data.json to Yandex Disk:', error);
     if (!config.localFallbackEnabled) {
