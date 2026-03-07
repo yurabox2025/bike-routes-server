@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
-import { config } from '../config.js';
+import { config, isRender } from '../config.js';
 import type { DataFile, User } from '../types/models.js';
 import { writeJsonAtomic } from '../utils/fs.js';
 import { Mutex } from '../utils/mutex.js';
@@ -26,7 +26,16 @@ function shouldUseYadiskForData(): boolean {
   if (config.dataStorageProvider === 'yadisk') {
     return true;
   }
-  return Boolean(config.yadiskToken);
+  // In auto mode: local dev uses local file, Render deploy uses Yandex Disk (if token exists).
+  return isRender && Boolean(config.yadiskToken);
+}
+
+export function getDataProvider(): 'local' | 'yadisk' {
+  return shouldUseYadiskForData() ? 'yadisk' : 'local';
+}
+
+export function getDataWriteTarget(): string {
+  return getDataProvider() === 'yadisk' ? config.yadiskDataPath : config.dataFilePath;
 }
 
 async function readLocalData(): Promise<DataFile> {

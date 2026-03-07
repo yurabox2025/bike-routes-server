@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config, validateConfig } from './config.js';
-import { initDataStore } from './services/dataStore.js';
+import { getDataProvider, getDataWriteTarget, initDataStore } from './services/dataStore.js';
 import { authRouter } from './routes/authRoutes.js';
 import { routesRouter } from './routes/routesRoutes.js';
 import { activitiesRouter } from './routes/activitiesRoutes.js';
@@ -31,6 +31,8 @@ async function bootstrap(): Promise<void> {
 
   app.listen(config.port, () => {
     console.log(`Server started on http://localhost:${config.port}`);
+    console.log(`Data provider: ${getDataProvider()}`);
+    console.log(`Writing data.json to: ${getDataWriteTarget()}`);
   });
 }
 

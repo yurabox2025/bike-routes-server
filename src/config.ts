@@ -27,6 +27,7 @@ export const config = {
 };
 
 export const isProduction = process.env.NODE_ENV === 'production';
+export const isRender = process.env.RENDER === 'true' || Boolean(process.env.RENDER_EXTERNAL_URL);
 
 export function validateConfig(): void {
   if (config.dataStorageProvider === 'yadisk' && !config.yadiskToken) {
