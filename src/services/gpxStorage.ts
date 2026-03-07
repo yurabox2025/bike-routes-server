@@ -9,6 +9,59 @@ export interface StoredGpxRef {
   pathOrUrl: string;
 }
 
+function buildDirectoryChain(filePath: string): string[] {
+  if (filePath.startsWith('app:/')) {
+    const segments = filePath
+      .slice('app:/'.length)
+      .split('/')
+      .filter(Boolean);
+    const dirSegments = segments.slice(0, -1);
+    const chain: string[] = [];
+    let current = 'app:';
+    for (const segment of dirSegments) {
+      current = `${current}/${segment}`;
+      chain.push(current);
+    }
+    return chain;
+  }
+
+  const segments = filePath.split('/').filter(Boolean);
+  const dirSegments = segments.slice(0, -1);
+  const chain: string[] = [];
+  let current = '';
+  for (const segment of dirSegments) {
+    current = `${current}/${segment}`;
+    chain.push(current);
+  }
+  return chain;
+}
+
+async function ensureRemoteDirectory(path: string): Promise<void> {
+  const mkdirUrl = new URL('https://cloud-api.yandex.net/v1/disk/resources');
+  mkdirUrl.searchParams.set('path', path);
+
+  const mkdirResp = await fetch(mkdirUrl, {
+    method: 'PUT',
+    headers: {
+      Authorization: `OAuth ${config.yadiskToken}`
+    }
+  });
+
+  if (mkdirResp.status === 201 || mkdirResp.status === 202 || mkdirResp.status === 409) {
+    return;
+  }
+
+  const body = await mkdirResp.text();
+  throw new Error(`Yandex Disk mkdir error for "${path}": ${mkdirResp.status} ${body}`);
+}
+
+async function ensureDirectoriesForRemoteFile(filePath: string): Promise<void> {
+  const chain = buildDirectoryChain(filePath);
+  for (const dir of chain) {
+    await ensureRemoteDirectory(dir);
+  }
+}
+
 function normalizeRemotePath(activityId: string): string {
   const base = config.yadiskBaseDir.replace(/\/$/, '');
   return `${base}/gpx/${activityId}.gpx`;
@@ -16,6 +69,8 @@ function normalizeRemotePath(activityId: string): string {
 
 async function uploadToYandexDisk(activityId: string, fileBuffer: Buffer): Promise<StoredGpxRef> {
   const remotePath = normalizeRemotePath(activityId);
+  await ensureDirectoriesForRemoteFile(remotePath);
+
   const metaUrl = new URL('https://cloud-api.yandex.net/v1/disk/resources/upload');
   metaUrl.searchParams.set('path', remotePath);
   metaUrl.searchParams.set('overwrite', 'true');
