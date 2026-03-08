@@ -229,7 +229,7 @@ routesRouter.post('/upload', upload.single('gpx'), async (req, res) => {
       participantUserIds,
       gpxStorage: storedGpx,
       routeLineGeoJson,
-      createdAt: new Date().toISOString()
+      createdAt: parsedGpx.startedAt
     };
     data.routes.push(createdRoute);
   });
