@@ -34,6 +34,18 @@ async function createDefaultDataWithAdmin(): Promise<DataFile> {
   return data;
 }
 
+function isYadiskDataNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('download url error: 404') ||
+    message.includes('"error":"disknotfounderror"') ||
+    message.includes('"error":"diskpathdoesntexistserror"')
+  );
+}
+
 function shouldUseYadiskForData(): boolean {
   if (config.dataStorageProvider === 'local') {
     return false;
@@ -96,6 +108,12 @@ async function readDataUnsafe(): Promise<DataFile> {
     await writeLocalMirrorIfNeeded(data);
     return data;
   } catch (error) {
+    if (isYadiskDataNotFoundError(error)) {
+      const defaultData = await createDefaultDataWithAdmin();
+      await persistData(defaultData);
+      console.log(`data.json not found on Yandex Disk. Created default file at: ${config.yadiskDataPath}`);
+      return defaultData;
+    }
     console.error('Failed to read data.json from Yandex Disk:', error);
     if (!config.localFallbackEnabled) {
       throw error;
