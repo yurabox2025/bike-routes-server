@@ -40,7 +40,7 @@ const updateParticipantsSchema = z.object({
   userIds: z.array(z.string().min(1))
 });
 const uploadRouteSchema = z.object({
-  routeName: z.string().min(1).max(120),
+  routeName: z.string().max(120).optional(),
   routeVisibility: visibilitySchema.default('private'),
   routeRating: z.number().int().min(1).max(10),
   trimMeters: z.number().min(0).default(0)
@@ -68,6 +68,24 @@ function parseParticipantUserIds(rawValue: unknown): string[] {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function extractRouteNameFromOriginalFilename(originalName: string): string {
+  const trimmed = originalName.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const dotIndex = trimmed.lastIndexOf('.');
+  const base = dotIndex > 0 ? trimmed.slice(0, dotIndex) : trimmed;
+  return base.trim();
+}
+
+function sanitizeFilenamePart(name: string): string {
+  return name
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 const routeListQuerySchema = z.object({
@@ -171,6 +189,9 @@ routesRouter.post('/upload', upload.single('gpx'), async (req, res) => {
     return;
   }
 
+  const inferredName = extractRouteNameFromOriginalFilename(req.file.originalname);
+  const routeName = (parsedPayload.data.routeName?.trim() || inferredName || `Маршрут ${new Date().toISOString().slice(0, 10)}`).slice(0, 120);
+
   const parsedGpx = await parseGpx(req.file.buffer);
   const requestedParticipants = parseParticipantUserIds(req.body.participantUserIds);
   let coords = parsedGpx.points;
@@ -201,7 +222,7 @@ routesRouter.post('/upload', upload.single('gpx'), async (req, res) => {
 
     createdRoute = {
       id: routeId,
-      name: parsedPayload.data.routeName.trim(),
+      name: routeName,
       createdBy: req.currentUser!.id,
       visibility: parsedPayload.data.routeVisibility,
       rating: parsedPayload.data.routeRating,
@@ -274,8 +295,9 @@ routesRouter.get('/:id/download', async (req, res) => {
   }
 
   const payload = await loadGpx(route.id, route.gpxStorage);
+  const downloadName = sanitizeFilenamePart(route.name) || route.id;
   res.setHeader('Content-Type', payload.contentType);
-  res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${downloadName}.gpx"`);
   res.send(payload.buffer);
 });
 
