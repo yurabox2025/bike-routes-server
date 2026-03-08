@@ -9,6 +9,12 @@ export interface StoredGpxRef {
   pathOrUrl: string;
 }
 
+export interface GpxDownloadPayload {
+  buffer: Buffer;
+  contentType: string;
+  filename: string;
+}
+
 function buildDirectoryChain(filePath: string): string[] {
   if (filePath.startsWith('app:/')) {
     const segments = filePath
@@ -118,6 +124,57 @@ async function saveLocally(activityId: string, fileBuffer: Buffer): Promise<Stor
   return {
     provider: 'local',
     pathOrUrl: localPath
+  };
+}
+
+async function downloadFromYandexDisk(remotePath: string): Promise<Buffer> {
+  const metaUrl = new URL('https://cloud-api.yandex.net/v1/disk/resources/download');
+  metaUrl.searchParams.set('path', remotePath);
+
+  const metaResp = await fetch(metaUrl, {
+    method: 'GET',
+    headers: {
+      Authorization: `OAuth ${config.yadiskToken}`
+    }
+  });
+
+  if (!metaResp.ok) {
+    const body = await metaResp.text();
+    throw new Error(`Yandex Disk download URL error: ${metaResp.status} ${body}`);
+  }
+
+  const metaJson = (await metaResp.json()) as { href?: string };
+  if (!metaJson.href) {
+    throw new Error('Yandex Disk download URL is missing');
+  }
+
+  const downloadResp = await fetch(metaJson.href, { method: 'GET' });
+  if (!downloadResp.ok) {
+    const body = await downloadResp.text();
+    throw new Error(`Yandex Disk download failed: ${downloadResp.status} ${body}`);
+  }
+
+  const data = await downloadResp.arrayBuffer();
+  return Buffer.from(data);
+}
+
+export async function loadGpx(activityId: string, storage: StoredGpxRef): Promise<GpxDownloadPayload> {
+  const filename = `${activityId}.gpx`;
+
+  if (storage.provider === 'local') {
+    const buffer = await fs.readFile(storage.pathOrUrl);
+    return {
+      buffer,
+      contentType: 'application/gpx+xml',
+      filename
+    };
+  }
+
+  const buffer = await downloadFromYandexDisk(storage.pathOrUrl);
+  return {
+    buffer,
+    contentType: 'application/gpx+xml',
+    filename
   };
 }
 

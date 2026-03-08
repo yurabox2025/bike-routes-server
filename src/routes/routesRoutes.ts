@@ -1,9 +1,21 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
+import { config } from '../config.js';
 import { requireAuth } from '../middleware/auth.js';
+import { parseGpx } from '../services/gpxParser.js';
+import { loadGpx, storeGpx } from '../services/gpxStorage.js';
 import { readData, updateData } from '../services/dataStore.js';
 import type { Route } from '../types/models.js';
+import { limitPoints, privacyCut, simplifyCoords, toLineString } from '../utils/geo.js';
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: config.maxGpxSizeMb * 1024 * 1024
+  }
+});
 
 const visibilitySchema = z.enum(['public', 'private']);
 
@@ -21,6 +33,42 @@ const createRouteSchema = z.object({
 const updateVisibilitySchema = z.object({
   visibility: visibilitySchema
 });
+const updateRatingSchema = z.object({
+  rating: z.number().int().min(1).max(10)
+});
+const updateParticipantsSchema = z.object({
+  userIds: z.array(z.string().min(1))
+});
+const uploadRouteSchema = z.object({
+  routeName: z.string().min(1).max(120),
+  routeVisibility: visibilitySchema.default('private'),
+  routeRating: z.number().int().min(1).max(10),
+  trimMeters: z.number().min(0).default(0)
+});
+
+function parseParticipantUserIds(rawValue: unknown): string[] {
+  if (!rawValue) {
+    return [];
+  }
+
+  if (Array.isArray(rawValue)) {
+    return rawValue.map((value) => String(value).trim()).filter(Boolean);
+  }
+
+  try {
+    const parsed = JSON.parse(String(rawValue)) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.map((value) => String(value).trim()).filter(Boolean);
+    }
+  } catch {
+    // Continue to fallback comma-separated parsing.
+  }
+
+  return String(rawValue)
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
 
 const routeListQuerySchema = z.object({
   scope: z.enum(['all', 'public', 'private', 'mine']).default('all')
@@ -95,10 +143,73 @@ routesRouter.post('/', async (req, res) => {
       name: parsed.data.name,
       createdBy: req.currentUser!.id,
       visibility: parsed.data.visibility,
+      rating: null,
       routeLineGeoJson: parsed.data.routeLineGeoJson!,
       createdAt: new Date().toISOString()
     };
 
+    data.routes.push(createdRoute);
+  });
+
+  res.status(201).json({ route: createdRoute });
+});
+
+routesRouter.post('/upload', upload.single('gpx'), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ message: 'GPX file is required' });
+    return;
+  }
+
+  const parsedPayload = uploadRouteSchema.safeParse({
+    routeName: req.body.routeName,
+    routeVisibility: req.body.routeVisibility ?? 'private',
+    routeRating: Number(req.body.routeRating),
+    trimMeters: Number(req.body.trimMeters ?? 0)
+  });
+  if (!parsedPayload.success) {
+    res.status(400).json({ message: 'Invalid payload' });
+    return;
+  }
+
+  const parsedGpx = await parseGpx(req.file.buffer);
+  const requestedParticipants = parseParticipantUserIds(req.body.participantUserIds);
+  let coords = parsedGpx.points;
+
+  if (parsedPayload.data.trimMeters > 0 && Number.isFinite(parsedPayload.data.trimMeters)) {
+    coords = privacyCut(coords, parsedPayload.data.trimMeters);
+  }
+
+  coords = simplifyCoords(coords, 0.00004);
+  coords = limitPoints(coords, config.maxSimplifiedPoints);
+
+  if (coords.length < 2) {
+    res.status(400).json({ message: 'Track becomes too short after processing' });
+    return;
+  }
+
+  const routeId = uuidv4();
+  const storedGpx = await storeGpx(routeId, req.file.buffer);
+  const routeLineGeoJson = toLineString(coords);
+  let createdRoute: Route | undefined;
+
+  await updateData((data) => {
+    const participantUserIds = Array.from(new Set([req.currentUser!.id, ...requestedParticipants]));
+    const allParticipantsExist = participantUserIds.every((userId) => data.users.some((user) => user.id === userId && !user.disabled));
+    if (!allParticipantsExist) {
+      throw new Error('Some participant users do not exist');
+    }
+
+    createdRoute = {
+      id: routeId,
+      name: parsedPayload.data.routeName.trim(),
+      createdBy: req.currentUser!.id,
+      visibility: parsedPayload.data.routeVisibility,
+      rating: parsedPayload.data.routeRating,
+      participantUserIds,
+      gpxStorage: storedGpx,
+      routeLineGeoJson,
+      createdAt: new Date().toISOString()
+    };
     data.routes.push(createdRoute);
   });
 
@@ -144,6 +255,30 @@ routesRouter.get('/:id', async (req, res) => {
   res.json({ route, completions });
 });
 
+routesRouter.get('/:id/download', async (req, res) => {
+  const data = await readData();
+  const route = data.routes.find((candidate) => candidate.id === req.params.id);
+  if (!route) {
+    res.status(404).json({ message: 'Route not found' });
+    return;
+  }
+
+  if (!canViewRoute(route, req.currentUser!.id)) {
+    res.status(403).json({ message: 'Запрещено' });
+    return;
+  }
+
+  if (!route.gpxStorage) {
+    res.status(404).json({ message: 'GPX file is not available for this route' });
+    return;
+  }
+
+  const payload = await loadGpx(route.id, route.gpxStorage);
+  res.setHeader('Content-Type', payload.contentType);
+  res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+  res.send(payload.buffer);
+});
+
 routesRouter.patch('/:id/visibility', async (req, res) => {
   const parsed = updateVisibilitySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -164,6 +299,64 @@ routesRouter.patch('/:id/visibility', async (req, res) => {
     }
 
     route.visibility = parsed.data.visibility;
+    updatedRoute = route;
+  });
+
+  res.json({ route: updatedRoute });
+});
+
+routesRouter.patch('/:id/rating', async (req, res) => {
+  const parsed = updateRatingSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: 'Invalid payload' });
+    return;
+  }
+
+  let updatedRoute: Route | undefined;
+
+  await updateData((data) => {
+    const route = data.routes.find((candidate) => candidate.id === req.params.id);
+    if (!route) {
+      throw new Error('Route not found');
+    }
+
+    if (!canManageRoute(route, req.currentUser!.id, req.currentUser!.role)) {
+      throw new Error('Запрещено');
+    }
+
+    route.rating = parsed.data.rating;
+    updatedRoute = route;
+  });
+
+  res.json({ route: updatedRoute });
+});
+
+routesRouter.patch('/:id/participants', async (req, res) => {
+  const parsed = updateParticipantsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: 'Invalid payload' });
+    return;
+  }
+
+  let updatedRoute: Route | undefined;
+
+  await updateData((data) => {
+    const route = data.routes.find((candidate) => candidate.id === req.params.id);
+    if (!route) {
+      throw new Error('Route not found');
+    }
+
+    if (!canManageRoute(route, req.currentUser!.id, req.currentUser!.role)) {
+      throw new Error('Запрещено');
+    }
+
+    const uniqueParticipantIds = Array.from(new Set([route.createdBy, ...parsed.data.userIds]));
+    const allParticipantsExist = uniqueParticipantIds.every((userId) => data.users.some((user) => user.id === userId && !user.disabled));
+    if (!allParticipantsExist) {
+      throw new Error('Some participant users do not exist');
+    }
+
+    route.participantUserIds = uniqueParticipantIds;
     updatedRoute = route;
   });
 

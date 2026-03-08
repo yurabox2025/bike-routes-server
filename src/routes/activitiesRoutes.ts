@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { requireAuth } from '../middleware/auth.js';
 import { parseGpx } from '../services/gpxParser.js';
-import { storeGpx } from '../services/gpxStorage.js';
+import { loadGpx, storeGpx } from '../services/gpxStorage.js';
 import { readData, updateData } from '../services/dataStore.js';
 import type { Activity, Route } from '../types/models.js';
 import { limitPoints, lineDistanceMeters, privacyCut, simplifyCoords, toLineString } from '../utils/geo.js';
@@ -129,6 +129,31 @@ activitiesRouter.get('/:id', async (req, res) => {
   res.json({ activity });
 });
 
+activitiesRouter.get('/:id/download', async (req, res) => {
+  const data = await readData();
+  const activity = data.activities.find((candidate) => candidate.id === req.params.id);
+  if (!activity) {
+    res.status(404).json({ message: 'Activity not found' });
+    return;
+  }
+
+  if (activity.routeId) {
+    const route = data.routes.find((candidate) => candidate.id === activity.routeId);
+    if (!route || !canViewRoute(route, req.currentUser!.id)) {
+      res.status(403).json({ message: 'Запрещено' });
+      return;
+    }
+  } else if (activity.userId !== req.currentUser!.id && req.currentUser!.role !== 'admin') {
+    res.status(403).json({ message: 'Запрещено' });
+    return;
+  }
+
+  const payload = await loadGpx(activity.id, activity.gpxStorage);
+  res.setHeader('Content-Type', payload.contentType);
+  res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+  res.send(payload.buffer);
+});
+
 activitiesRouter.post('/', upload.single('gpx'), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ message: 'GPX file is required' });
@@ -137,11 +162,22 @@ activitiesRouter.post('/', upload.single('gpx'), async (req, res) => {
 
   const activityId = uuidv4();
   const trimMeters = Number(req.body.trimMeters ?? 0);
-  const routeId = req.body.routeId ? String(req.body.routeId) : null;
+  const routeName = req.body.routeName ? String(req.body.routeName).trim() : '';
+  const routeVisibility = req.body.routeVisibility === 'public' ? 'public' : req.body.routeVisibility === 'private' ? 'private' : null;
+  const routeRatingRaw = Number(req.body.routeRating);
+  const routeRating = Number.isInteger(routeRatingRaw) ? routeRatingRaw : NaN;
   const requestedParticipants = parseParticipantUserIds(req.body.participantUserIds);
 
-  if (!routeId) {
-    res.status(400).json({ message: 'routeId is required. Create a route first and then upload completion.' });
+  if (!routeName) {
+    res.status(400).json({ message: 'routeName is required' });
+    return;
+  }
+  if (!routeVisibility) {
+    res.status(400).json({ message: 'routeVisibility must be public or private' });
+    return;
+  }
+  if (!Number.isFinite(routeRating) || routeRating < 1 || routeRating > 10) {
+    res.status(400).json({ message: 'routeRating must be an integer between 1 and 10' });
     return;
   }
 
@@ -163,21 +199,26 @@ activitiesRouter.post('/', upload.single('gpx'), async (req, res) => {
   const storedGpx = await storeGpx(activityId, req.file.buffer);
 
   let createdActivity: Activity | undefined;
+  let createdRouteId = '';
+  const routeLineGeoJson = toLineString(coords);
 
   await updateData((data) => {
-    const route = data.routes.find((candidate) => candidate.id === routeId);
-    if (!route) {
-      throw new Error('Route not found');
-    }
-    if (!canUseRoute(route, req.currentUser!.id)) {
-      throw new Error('Запрещено');
-    }
-
     const uniqueParticipantIds = Array.from(new Set([req.currentUser!.id, ...requestedParticipants]));
     const allParticipantsExist = uniqueParticipantIds.every((userId) => data.users.some((user) => user.id === userId && !user.disabled));
     if (!allParticipantsExist) {
       throw new Error('Some participant users do not exist');
     }
+
+    createdRouteId = uuidv4();
+    data.routes.push({
+      id: createdRouteId,
+      name: routeName,
+      createdBy: req.currentUser!.id,
+      visibility: routeVisibility,
+      rating: routeRating,
+      routeLineGeoJson,
+      createdAt: new Date().toISOString()
+    });
 
     createdActivity = {
       id: activityId,
@@ -186,9 +227,9 @@ activitiesRouter.post('/', upload.single('gpx'), async (req, res) => {
       startedAt: parsed.startedAt,
       distanceMeters: Math.round(lineDistanceMeters(coords)),
       durationSeconds: parsed.durationSeconds,
-      polylineGeoJson: toLineString(coords),
+      polylineGeoJson: routeLineGeoJson,
       gpxStorage: storedGpx,
-      routeId,
+      routeId: createdRouteId,
       createdAt: new Date().toISOString()
     };
 

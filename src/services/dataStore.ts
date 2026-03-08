@@ -19,6 +19,21 @@ function createEmptyData(): DataFile {
   };
 }
 
+async function createDefaultDataWithAdmin(): Promise<DataFile> {
+  const data = createEmptyData();
+  const admin: User = {
+    id: uuidv4(),
+    name: config.adminName,
+    pinHash: await bcrypt.hash(config.adminPin, 10),
+    role: 'admin',
+    createdAt: new Date().toISOString(),
+    disabled: false
+  };
+  data.users.push(admin);
+  data.updatedAt = new Date().toISOString();
+  return data;
+}
+
 function shouldUseYadiskForData(): boolean {
   if (config.dataStorageProvider === 'local') {
     return false;
@@ -39,8 +54,20 @@ export function getDataWriteTarget(): string {
 }
 
 async function readLocalData(): Promise<DataFile> {
-  const raw = await fs.readFile(config.dataFilePath, 'utf-8');
-  return JSON.parse(raw) as DataFile;
+  try {
+    const raw = await fs.readFile(config.dataFilePath, 'utf-8');
+    return JSON.parse(raw) as DataFile;
+  } catch (error) {
+    const fsError = error as NodeJS.ErrnoException;
+    if (fsError.code !== 'ENOENT') {
+      throw error;
+    }
+
+    const data = await createDefaultDataWithAdmin();
+    await writeLocalData(data);
+    console.log(`data.json not found. Created default file at: ${config.dataFilePath}`);
+    return data;
+  }
 }
 
 async function writeLocalData(data: DataFile): Promise<void> {
@@ -127,17 +154,7 @@ export async function initDataStore(): Promise<void> {
       console.error('Data store bootstrap read failed, creating new data file:', error);
     }
 
-    const data = createEmptyData();
-    const admin: User = {
-      id: uuidv4(),
-      name: config.adminName,
-      pinHash: await bcrypt.hash(config.adminPin, 10),
-      role: 'admin',
-      createdAt: new Date().toISOString(),
-      disabled: false
-    };
-    data.users.push(admin);
-    data.updatedAt = new Date().toISOString();
+    const data = await createDefaultDataWithAdmin();
     await persistData(data);
   });
 }

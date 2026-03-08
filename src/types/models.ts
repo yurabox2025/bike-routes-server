@@ -19,6 +19,9 @@ export interface Route {
   name: string;
   createdBy: string;
   visibility: 'public' | 'private';
+  rating?: number | null;
+  participantUserIds?: string[];
+  gpxStorage?: GpxStorageRef;
   routeLineGeoJson: LineStringGeoJson;
   createdAt: string;
 }
