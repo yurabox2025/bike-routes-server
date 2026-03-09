@@ -216,8 +216,10 @@ activitiesRouter.post('/', upload.single('gpx'), async (req, res) => {
       createdBy: req.currentUser!.id,
       visibility: routeVisibility,
       rating: routeRating,
+      elevationGainMeters: parsed.elevationGainMeters,
+      elevationLossMeters: parsed.elevationLossMeters,
       routeLineGeoJson,
-      createdAt: new Date().toISOString()
+      createdAt: parsed.startedAt
     });
 
     createdActivity = {

@@ -226,6 +226,8 @@ routesRouter.post('/upload', upload.single('gpx'), async (req, res) => {
       createdBy: req.currentUser!.id,
       visibility: parsedPayload.data.routeVisibility,
       rating: parsedPayload.data.routeRating,
+      elevationGainMeters: parsedGpx.elevationGainMeters,
+      elevationLossMeters: parsedGpx.elevationLossMeters,
       participantUserIds,
       gpxStorage: storedGpx,
       routeLineGeoJson,

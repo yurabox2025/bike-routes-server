@@ -4,6 +4,8 @@ interface ParsedGpx {
   points: [number, number][];
   startedAt: string;
   durationSeconds?: number;
+  elevationGainMeters: number;
+  elevationLossMeters: number;
 }
 
 function asArray<T>(value: T | T[] | undefined): T[] {
@@ -23,6 +25,7 @@ export async function parseGpx(buffer: Buffer): Promise<ParsedGpx> {
 
   const tracks = asArray(parsed?.gpx?.trk);
   const points: [number, number][] = [];
+  const elevations: number[] = [];
   const times: string[] = [];
 
   for (const track of tracks) {
@@ -32,6 +35,10 @@ export async function parseGpx(buffer: Buffer): Promise<ParsedGpx> {
         const lon = Number(point?.lon);
         if (Number.isFinite(lat) && Number.isFinite(lon)) {
           points.push([lon, lat]);
+          const ele = Number(point?.ele);
+          if (Number.isFinite(ele)) {
+            elevations.push(ele);
+          }
           if (point?.time) {
             times.push(String(point.time));
           }
@@ -59,5 +66,25 @@ export async function parseGpx(buffer: Buffer): Promise<ParsedGpx> {
     }
   }
 
-  return { points, startedAt, durationSeconds };
+  let elevationGainMeters = 0;
+  let elevationLossMeters = 0;
+  for (let index = 1; index < elevations.length; index += 1) {
+    const delta = elevations[index] - elevations[index - 1];
+    if (!Number.isFinite(delta) || delta === 0) {
+      continue;
+    }
+    if (delta > 0) {
+      elevationGainMeters += delta;
+    } else {
+      elevationLossMeters += Math.abs(delta);
+    }
+  }
+
+  return {
+    points,
+    startedAt,
+    durationSeconds,
+    elevationGainMeters: Math.round(elevationGainMeters),
+    elevationLossMeters: Math.round(elevationLossMeters)
+  };
 }

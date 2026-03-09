@@ -20,6 +20,8 @@ export interface Route {
   createdBy: string;
   visibility: 'public' | 'private';
   rating?: number | null;
+  elevationGainMeters?: number;
+  elevationLossMeters?: number;
   participantUserIds?: string[];
   gpxStorage?: GpxStorageRef;
   routeLineGeoJson: LineStringGeoJson;
