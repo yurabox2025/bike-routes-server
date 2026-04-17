@@ -6,7 +6,10 @@ dotenv.config();
 const cwd = process.cwd();
 const dataStorageProviderRaw = (process.env.DATA_STORAGE_PROVIDER ?? 'auto').toLowerCase();
 const dataStorageProvider =
-  dataStorageProviderRaw === 'local' || dataStorageProviderRaw === 'yadisk' || dataStorageProviderRaw === 'auto'
+  dataStorageProviderRaw === 'local' ||
+  dataStorageProviderRaw === 'yadisk' ||
+  dataStorageProviderRaw === 'sqlite' ||
+  dataStorageProviderRaw === 'auto'
     ? dataStorageProviderRaw
     : 'auto';
 
@@ -14,6 +17,7 @@ export const config = {
   port: Number(process.env.PORT ?? 4000),
   jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
   dataFilePath: process.env.DATA_FILE_PATH ?? path.join(cwd, '..', 'data', 'data.json'),
+  sqliteFilePath: process.env.SQLITE_FILE_PATH ?? path.join(cwd, '..', 'data', 'data.sqlite'),
   uploadsDir: process.env.UPLOADS_DIR ?? path.join(cwd, 'uploads'),
   maxGpxSizeMb: Number(process.env.MAX_GPX_SIZE_MB ?? 20),
   maxSimplifiedPoints: Number(process.env.MAX_SIMPLIFIED_POINTS ?? 5000),

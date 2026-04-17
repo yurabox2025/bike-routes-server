@@ -5,6 +5,7 @@ import { config, isRender } from '../config.js';
 import type { DataFile, User } from '../types/models.js';
 import { writeJsonAtomic } from '../utils/fs.js';
 import { Mutex } from '../utils/mutex.js';
+import { initSqliteDataStore, readDataFromSqlite, writeDataToSqlite } from './sqliteData.js';
 import { downloadDataFromYandexDisk, uploadDataToYandexDisk } from './yadiskData.js';
 
 const dataMutex = new Mutex();
@@ -47,7 +48,7 @@ function isYadiskDataNotFoundError(error: unknown): boolean {
 }
 
 function shouldUseYadiskForData(): boolean {
-  if (config.dataStorageProvider === 'local') {
+  if (config.dataStorageProvider === 'local' || config.dataStorageProvider === 'sqlite') {
     return false;
   }
   if (config.dataStorageProvider === 'yadisk') {
@@ -57,12 +58,26 @@ function shouldUseYadiskForData(): boolean {
   return isRender && Boolean(config.yadiskToken);
 }
 
-export function getDataProvider(): 'local' | 'yadisk' {
+function shouldUseSqliteForData(): boolean {
+  return config.dataStorageProvider === 'sqlite';
+}
+
+export function getDataProvider(): 'local' | 'yadisk' | 'sqlite' {
+  if (shouldUseSqliteForData()) {
+    return 'sqlite';
+  }
   return shouldUseYadiskForData() ? 'yadisk' : 'local';
 }
 
 export function getDataWriteTarget(): string {
-  return getDataProvider() === 'yadisk' ? config.yadiskDataPath : config.dataFilePath;
+  const provider = getDataProvider();
+  if (provider === 'yadisk') {
+    return config.yadiskDataPath;
+  }
+  if (provider === 'sqlite') {
+    return config.sqliteFilePath;
+  }
+  return config.dataFilePath;
 }
 
 async function readLocalData(): Promise<DataFile> {
@@ -98,7 +113,32 @@ async function writeLocalMirrorIfNeeded(data: DataFile): Promise<void> {
   }
 }
 
+async function readSqliteData(): Promise<DataFile> {
+  const data = await readDataFromSqlite();
+  if (data) {
+    return data;
+  }
+
+  try {
+    const localData = await readLocalData();
+    await writeDataToSqlite(localData);
+    console.log(`Initialized SQLite data from existing JSON file: ${config.dataFilePath}`);
+    return localData;
+  } catch (error) {
+    console.warn('Failed to initialize SQLite from local data.json, creating default data:', error);
+  }
+
+  const defaultData = await createDefaultDataWithAdmin();
+  await writeDataToSqlite(defaultData);
+  console.log(`SQLite DB not found. Created default data at: ${config.sqliteFilePath}`);
+  return defaultData;
+}
+
 async function readDataUnsafe(): Promise<DataFile> {
+  if (shouldUseSqliteForData()) {
+    return readSqliteData();
+  }
+
   if (!shouldUseYadiskForData()) {
     return readLocalData();
   }
@@ -123,6 +163,11 @@ async function readDataUnsafe(): Promise<DataFile> {
 }
 
 async function persistData(data: DataFile): Promise<void> {
+  if (shouldUseSqliteForData()) {
+    await writeDataToSqlite(data);
+    return;
+  }
+
   if (!shouldUseYadiskForData()) {
     await writeLocalData(data);
     return;
@@ -160,6 +205,10 @@ async function ensureAdminExists(data: DataFile): Promise<boolean> {
 
 export async function initDataStore(): Promise<void> {
   await dataMutex.runExclusive(async () => {
+    if (shouldUseSqliteForData()) {
+      await initSqliteDataStore();
+    }
+
     try {
       const data = await readDataUnsafe();
       const changed = await ensureAdminExists(data);

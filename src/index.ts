@@ -32,7 +32,7 @@ async function bootstrap(): Promise<void> {
   app.listen(config.port, () => {
     console.log(`Server started on http://localhost:${config.port}`);
     console.log(`Data provider: ${getDataProvider()}`);
-    console.log(`Writing data.json to: ${getDataWriteTarget()}`);
+    console.log(`Data write target: ${getDataWriteTarget()}`);
   });
 }
 

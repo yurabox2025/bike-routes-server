@@ -10,6 +10,7 @@ import { loadGpx, storeGpx } from '../services/gpxStorage.js';
 import { readData, updateData } from '../services/dataStore.js';
 import type { Activity, Route } from '../types/models.js';
 import { limitPoints, lineDistanceMeters, privacyCut, simplifyCoords, toLineString } from '../utils/geo.js';
+import { buildAttachmentContentDisposition } from '../utils/http.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -150,7 +151,7 @@ activitiesRouter.get('/:id/download', async (req, res) => {
 
   const payload = await loadGpx(activity.id, activity.gpxStorage);
   res.setHeader('Content-Type', payload.contentType);
-  res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+  res.setHeader('Content-Disposition', buildAttachmentContentDisposition(payload.filename));
   res.send(payload.buffer);
 });
 
