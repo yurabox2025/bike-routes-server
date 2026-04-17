@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { requireAuth } from '../middleware/auth.js';
-import { parseGpx } from '../services/gpxParser.js';
+import { parseGpx, parseGpxProfile } from '../services/gpxParser.js';
 import { loadGpx, storeGpx } from '../services/gpxStorage.js';
 import { readData, updateData } from '../services/dataStore.js';
 import type { Route } from '../types/models.js';
@@ -91,6 +91,10 @@ function sanitizeFilenamePart(name: string): string {
 
 const routeListQuerySchema = z.object({
   scope: z.enum(['all', 'public', 'private', 'mine']).default('all')
+});
+
+const routeProfileQuerySchema = z.object({
+  maxPoints: z.coerce.number().int().min(100).max(2000).default(900)
 });
 
 function normalizeRouteVisibility(route: Route): 'public' | 'private' {
@@ -302,6 +306,37 @@ routesRouter.get('/:id/download', async (req, res) => {
   res.setHeader('Content-Type', payload.contentType);
   res.setHeader('Content-Disposition', buildAttachmentContentDisposition(`${downloadName}.gpx`));
   res.send(payload.buffer);
+});
+
+routesRouter.get('/:id/profile', async (req, res) => {
+  const parsedQuery = routeProfileQuerySchema.safeParse({
+    maxPoints: req.query.maxPoints ?? 900
+  });
+  if (!parsedQuery.success) {
+    res.status(400).json({ message: 'Invalid query' });
+    return;
+  }
+
+  const data = await readData();
+  const route = data.routes.find((candidate) => candidate.id === req.params.id);
+  if (!route) {
+    res.status(404).json({ message: 'Route not found' });
+    return;
+  }
+
+  if (!canViewRoute(route, req.currentUser!.id)) {
+    res.status(403).json({ message: 'Запрещено' });
+    return;
+  }
+
+  if (!route.gpxStorage) {
+    res.status(404).json({ message: 'GPX file is not available for this route' });
+    return;
+  }
+
+  const payload = await loadGpx(route.id, route.gpxStorage);
+  const profile = await parseGpxProfile(payload.buffer, parsedQuery.data.maxPoints);
+  res.json({ profile });
 });
 
 routesRouter.patch('/:id/visibility', async (req, res) => {
