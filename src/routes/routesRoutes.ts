@@ -420,7 +420,7 @@ routesRouter.patch('/:id/participants', async (req, res) => {
       throw new Error('Запрещено');
     }
 
-    const uniqueParticipantIds = Array.from(new Set([route.createdBy, ...parsed.data.userIds]));
+    const uniqueParticipantIds = Array.from(new Set(parsed.data.userIds));
     const allParticipantsExist = uniqueParticipantIds.every((userId) => data.users.some((user) => user.id === userId && !user.disabled));
     if (!allParticipantsExist) {
       throw new Error('Some participant users do not exist');
