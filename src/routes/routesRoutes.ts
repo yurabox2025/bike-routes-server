@@ -3,6 +3,7 @@ import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { config } from '../config.js';
+import { ROUTE_COLORS } from '../constants/routeColors.js';
 import { requireAuth } from '../middleware/auth.js';
 import { parseGpx, parseGpxProfile } from '../services/gpxParser.js';
 import { loadGpx, storeGpx } from '../services/gpxStorage.js';
@@ -19,9 +20,11 @@ const upload = multer({
 });
 
 const visibilitySchema = z.enum(['public', 'private']);
+const routeColorSchema = z.enum(ROUTE_COLORS);
 
 const createRouteSchema = z.object({
   name: z.string().min(1).max(120),
+  color: routeColorSchema.optional(),
   visibility: visibilitySchema.default('private'),
   routeLineGeoJson: z
     .object({
@@ -40,8 +43,12 @@ const updateRatingSchema = z.object({
 const updateParticipantsSchema = z.object({
   userIds: z.array(z.string().min(1))
 });
+const updateColorSchema = z.object({
+  color: routeColorSchema
+});
 const uploadRouteSchema = z.object({
   routeName: z.string().max(120).optional(),
+  routeColor: routeColorSchema.optional(),
   routeVisibility: visibilitySchema.default('private'),
   routeRating: z.number().int().min(1).max(10),
   trimMeters: z.number().min(0).default(0)
@@ -164,6 +171,7 @@ routesRouter.post('/', async (req, res) => {
     createdRoute = {
       id: uuidv4(),
       name: parsed.data.name,
+      color: parsed.data.color,
       createdBy: req.currentUser!.id,
       visibility: parsed.data.visibility,
       rating: null,
@@ -185,6 +193,7 @@ routesRouter.post('/upload', upload.single('gpx'), async (req, res) => {
 
   const parsedPayload = uploadRouteSchema.safeParse({
     routeName: req.body.routeName,
+    routeColor: req.body.routeColor,
     routeVisibility: req.body.routeVisibility ?? 'private',
     routeRating: Number(req.body.routeRating),
     trimMeters: Number(req.body.trimMeters ?? 0)
@@ -228,6 +237,7 @@ routesRouter.post('/upload', upload.single('gpx'), async (req, res) => {
     createdRoute = {
       id: routeId,
       name: routeName,
+      color: parsedPayload.data.routeColor,
       createdBy: req.currentUser!.id,
       visibility: parsedPayload.data.routeVisibility,
       rating: parsedPayload.data.routeRating,
@@ -417,6 +427,32 @@ routesRouter.patch('/:id/participants', async (req, res) => {
     }
 
     route.participantUserIds = uniqueParticipantIds;
+    updatedRoute = route;
+  });
+
+  res.json({ route: updatedRoute });
+});
+
+routesRouter.patch('/:id/color', async (req, res) => {
+  const parsed = updateColorSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: 'Invalid payload' });
+    return;
+  }
+
+  let updatedRoute: Route | undefined;
+
+  await updateData((data) => {
+    const route = data.routes.find((candidate) => candidate.id === req.params.id);
+    if (!route) {
+      throw new Error('Route not found');
+    }
+
+    if (!canManageRoute(route, req.currentUser!.id, req.currentUser!.role)) {
+      throw new Error('Запрещено');
+    }
+
+    route.color = parsed.data.color;
     updatedRoute = route;
   });
 

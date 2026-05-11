@@ -17,6 +17,7 @@ export interface LineStringGeoJson {
 export interface Route {
   id: string;
   name: string;
+  color?: string;
   createdBy: string;
   visibility: 'public' | 'private';
   rating?: number | null;
