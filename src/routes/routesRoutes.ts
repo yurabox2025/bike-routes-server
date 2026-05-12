@@ -37,6 +37,9 @@ const createRouteSchema = z.object({
 const updateVisibilitySchema = z.object({
   visibility: visibilitySchema
 });
+const updateNameSchema = z.object({
+  name: z.string().trim().min(1).max(120)
+});
 const updateRatingSchema = z.object({
   rating: z.number().int().min(1).max(10)
 });
@@ -369,6 +372,32 @@ routesRouter.patch('/:id/visibility', async (req, res) => {
     }
 
     route.visibility = parsed.data.visibility;
+    updatedRoute = route;
+  });
+
+  res.json({ route: updatedRoute });
+});
+
+routesRouter.patch('/:id/name', async (req, res) => {
+  const parsed = updateNameSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: 'Invalid payload' });
+    return;
+  }
+
+  let updatedRoute: Route | undefined;
+
+  await updateData((data) => {
+    const route = data.routes.find((candidate) => candidate.id === req.params.id);
+    if (!route) {
+      throw new Error('Route not found');
+    }
+
+    if (!canManageRoute(route, req.currentUser!.id, req.currentUser!.role)) {
+      throw new Error('Запрещено');
+    }
+
+    route.name = parsed.data.name;
     updatedRoute = route;
   });
 
