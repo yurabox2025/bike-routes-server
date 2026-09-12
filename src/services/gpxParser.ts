@@ -33,6 +33,7 @@ export interface ParsedGpxProfile {
   startedAt?: string;
   finishedAt?: string;
   durationSeconds?: number;
+  movingDurationSeconds?: number;
 }
 
 function asArray<T>(value: T | T[] | undefined): T[] {
@@ -113,6 +114,31 @@ function downsampleProfileSamples(samples: GpxProfileSample[], maxPoints: number
   }
 
   return compact;
+}
+
+function calculateMovingDurationSeconds(points: RawTrackPoint[]): number | undefined {
+  let total = 0;
+
+  for (let index = 1; index < points.length; index += 1) {
+    const prev = points[index - 1];
+    const current = points[index];
+    if (!prev.time || !current.time) {
+      continue;
+    }
+
+    const deltaSeconds = (new Date(current.time).getTime() - new Date(prev.time).getTime()) / 1000;
+    if (deltaSeconds <= 0) {
+      continue;
+    }
+
+    const deltaDistance = haversineDistanceMeters(prev.point, current.point);
+    const speedKmh = (deltaDistance / deltaSeconds) * 3.6;
+    if (deltaDistance >= 3 && speedKmh >= 1 && speedKmh <= 120) {
+      total += deltaSeconds;
+    }
+  }
+
+  return total > 0 ? Math.round(total) : undefined;
 }
 
 export async function parseGpx(buffer: Buffer): Promise<ParsedGpx> {
@@ -234,6 +260,7 @@ export async function parseGpxProfile(buffer: Buffer, maxPoints = 900): Promise<
     maxSlopeDownPercent: maxSlopeDownPercent !== null ? Number(maxSlopeDownPercent.toFixed(2)) : null,
     startedAt,
     finishedAt,
-    durationSeconds
+    durationSeconds,
+    movingDurationSeconds: calculateMovingDurationSeconds(rawPoints)
   };
 }
